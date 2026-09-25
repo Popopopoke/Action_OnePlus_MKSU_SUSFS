@@ -52,7 +52,7 @@ on:
         type: choice
         description: "处理器代号"
         required: true
-        default: kaanapali
+        default: canoe
         options:
           - crow
           - waipio
@@ -60,7 +60,6 @@ on:
           - pineapple
           - sun
           - canoe
-          - kaanapali
       ANDROID_VERSION:
         type: choice
         description: "内核安卓版本"
@@ -355,7 +354,28 @@ jobs:
         if: ${{ github.event.inputs.CPU != 'sm8650' && github.event.inputs.CPU != 'sm7675' }}
         run: |
          cd kernel_workspace
-         LTO=thin SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+         # 注意：不可再传 LTO=thin。6.12(kbuild-mixed) 树中 oplus_build_kernel.sh 内部会走
+         # build_with_bazel.py 并把 LTO 转成 --lto <x>，而该脚本已不再支持该参数，会立即
+         # 报 "ERROR: --lto is not supported now, please remove" 并中止构建（约 8 秒），
+         # 结果没有任何 Image 产物，问题被推迟到 Make AnyKernel3 才爆发。
+         SYSTEM_DLKM_RE_SIGN=0 BUILD_SYSTEM_DLKM=0 KMI_SYMBOL_LIST_STRICT_MODE=0 ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ github.event.inputs.CPUD }} ${{ github.event.inputs.BUILD_METHOD }}
+
+      # 构建产物自检：提前暴露「构建未产出 Image」或「产物路径与预期不符」，
+      # 避免问题被推迟到 Make AnyKernel3 步才以 find 报错的形式出现。
+      - name: Verify build output
+        if: always()
+        run: |
+          echo "== 搜索内核 Image =="
+          found=$(find kernel_workspace/kernel_platform/out -name Image -print -quit 2>/dev/null || true)
+          if [ -z "$found" ]; then
+            echo "::error::未在 kernel_platform/out 下找到 Image：构建未产出内核镜像。"
+            echo "常见原因：oplus_build_kernel.sh 未透传底层失败（如 build_with_bazel.py 报 ERROR），或平台名未被识别而发生回退。"
+            echo "== kernel_platform/out 目录结构（前 80 行，供排查）=="
+            find kernel_workspace/kernel_platform/out -maxdepth 3 -type d 2>/dev/null | head -n 80 || true
+            exit 1
+          else
+            echo "找到 Image: $found"
+          fi
 
       - name: Make AnyKernel3
         run: |
@@ -371,18 +391,20 @@ jobs:
           target2="./kernel_workspace/kernel"
 
           # 查找 Image 文件
-          if find "$dir1" -name "Image" | grep -q "Image"; then
-            image_path="$dir1"Image
-          elif find "$dir2" -name "Image" | grep -q "Image"; then
-            image_path="$dir2"Image
-          elif find "$dir3" -name "Image" | grep -q "Image"; then
-            image_path="$dir3"Image
-          elif find "$dir4" -name "Image" | grep -q "Image"; then
-            image_path="$dir4"Image
-          elif find "$dir5" -name "Image" | grep -q "Image"; then
-            image_path="$dir5"Image
-          else
-            image_path=$(find "./kernel_workspace/kernel_platform/common/out/" -name "Image" | head -n 1)
+          # 候选目录可能并不存在（构建输出路径随 CPU/BUILD_METHOD 不同），
+          # 因此先用 [ -d ] 守卫逐个判断，避免 find 对不存在的路径报
+          # "No such file or directory" 造成误导；同时把回退搜索放宽到整个 out/。
+          image_path=""
+          for d in "$dir1" "$dir2" "$dir3" "$dir4" "$dir5"; do
+            [ -d "$d" ] || continue
+            f=$(find "$d" -name Image -print -quit 2>/dev/null || true)
+            if [ -n "$f" ]; then
+              image_path="$f"
+              break
+            fi
+          done
+          if [ -z "$image_path" ]; then
+            image_path=$(find kernel_workspace/kernel_platform/out -name Image -print -quit 2>/dev/null || true)
           fi
 
           # 拷贝 Image
@@ -396,6 +418,8 @@ jobs:
             cp "$dir1"Image ./AnyKernel3/Image
           else
             echo "未找到 Image 文件，构建可能失败"
+            echo "== 已存在的产物目录（供排查）=="
+            find kernel_workspace/kernel_platform/out -maxdepth 3 -type d 2>/dev/null | head -n 50 || true
             exit 1
           fi
 
