@@ -130,8 +130,8 @@ jobs:
 
       - name: Configure Git
         run: |
-          git config --global user.name "Numbersf"
-          git config --global user.email "263623064@qq.com"
+          git config --global user.name "Popopopoke"
+          git config --global user.email "popopopoke@outlook.com"
 
       - name: Install dependencies
         run: |
@@ -189,12 +189,22 @@ jobs:
       - name: Force remove -dirty suffix
         run: |
           cd kernel_workspace/kernel_platform
-          sed -i 's/ -dirty//g' common/scripts/setlocalversion
-          sed -i 's/ -dirty//g' msm-kernel/scripts/setlocalversion
-          sed -i 's/ -dirty//g' external/dtc/scripts/setlocalversion
-          sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          # 内核树布局随 CPU/FEIL 变化：sm8850 系列只有 common/，msm-kernel/ 与 external/dtc/
+          # 可能不存在（dtc 在 manifest 中映射为 external/qcom-dtc），
+          # 故逐个判存在再改，避免 sed 因文件缺失直接 exit 2。
+          for f in common/scripts/setlocalversion msm-kernel/scripts/setlocalversion external/dtc/scripts/setlocalversion; do
+            if [ -f "$f" ]; then
+              sed -i 's/ -dirty//g' "$f"
+              echo "patched $f"
+            else
+              echo "skip (not present): $f"
+            fi
+          done
+          if [ -f common/scripts/setlocalversion ]; then
+            sed -i '$i res=$(echo "$res" | sed '\''s/-dirty//g'\'')' common/scripts/setlocalversion
+          fi
           git add -A
-          git commit -m "Force remove -dirty suffix from kernel version"
+          git commit -m "Force remove -dirty suffix from kernel version" || echo "nothing to commit"
 
       # 添加 SukiSU Ultra
       - name: Add KernelSU-SukiSU Ultra
