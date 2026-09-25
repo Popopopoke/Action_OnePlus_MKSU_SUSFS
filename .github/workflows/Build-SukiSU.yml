@@ -292,6 +292,22 @@ jobs:
           # Remove check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
 
+          # 关闭 bazel minimized defconfig 校验（Bug④）：
+          # common_kernel 默认 check_defconfig="minimized"，会 make savedefconfig 并与
+          # common/arch/arm64/configs/gki_defconfig 逐行 diff；而本步骤刚向该文件末尾
+          # 追加了 CONFIG_KSU / CONFIG_KSU_SUSFS_* 等条目（顺序不同、且部分符号不可见会被
+          # savedefconfig 丢弃），必然导致：
+          #   ERROR: savedefconfig does not match common/arch/arm64/configs/gki_defconfig
+          # 故为 kernel_aarch64 / kernel_aarch64_16k 显式设置 check_defconfig="disabled"。
+          BUILD_BAZEL=./common/BUILD.bazel
+          if [ -f "$BUILD_BAZEL" ] && ! grep -q 'check_defconfig = "disabled"' "$BUILD_BAZEL"; then
+            sed -i 's/^\(    name = "kernel_aarch64",\)$/\1\n    check_defconfig = "disabled",/' "$BUILD_BAZEL"
+            sed -i 's/^\(    name = "kernel_aarch64_16k",\)$/\1\n    check_defconfig = "disabled",/' "$BUILD_BAZEL"
+            echo "已为 kernel_aarch64 / kernel_aarch64_16k 设置 check_defconfig=\"disabled\""
+          else
+            echo "check_defconfig=\"disabled\" 已存在或 $BUILD_BAZEL 不存在，跳过"
+          fi
+
           # LZ4KD配置
           if [ "${{ github.event.inputs.ZRAM }}" = "true" ]; then
           CONFIG_FILE=./common/arch/arm64/configs/gki_defconfig
@@ -442,7 +458,14 @@ jobs:
       - name: Apply patch_linux and replace Image
         if: ${{ github.event.inputs.KPM == 'true' }}
         run: |
-          cd /home/runner/work/Action_OnePlus_MKSU_SUSFS/Action_OnePlus_MKSU_SUSFS/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist
+          # 不再硬编码 /home/runner/work/<repo>/...（仓库改名即失效），改用 $GITHUB_WORKSPACE
+          DIST="$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out/msm-kernel-${{ github.event.inputs.CPUD }}-${{ github.event.inputs.BUILD_METHOD }}/dist"
+          if [ ! -d "$DIST" ]; then
+            echo "::error::未找到 dist 目录：$DIST（构建未产出，或平台名/路径与预期不符）"
+            find "$GITHUB_WORKSPACE/kernel_workspace/kernel_platform/out" -maxdepth 2 -type d 2>/dev/null | head -n 40 || true
+            exit 1
+          fi
+          cd "$DIST"
 
           curl -LSs "https://raw.githubusercontent.com/ShirkNeko/SukiSU_patch/refs/heads/main/kpm/patch_linux" -o patch_linux
           chmod +x patch_linux
