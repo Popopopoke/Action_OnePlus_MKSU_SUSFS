@@ -6,7 +6,7 @@ on:
         type: choice
         description: "分支"
         required: true
-        default: sm8550
+        default: sm8850
         options:
           - sm7550
           - sm7675
@@ -20,7 +20,7 @@ on:
         type: choice
         description: "配置文件"
         required: true
-        default: oneplus_ace2_pro_v
+        default: oneplus_15t
         options:
           - oneplus_nord_ce4_v
           - oneplus_ace_3v_v
@@ -52,7 +52,7 @@ on:
         type: choice
         description: "处理器代号"
         required: true
-        default: kalama
+        default: kaanapali
         options:
           - crow
           - waipio
@@ -65,7 +65,7 @@ on:
         type: choice
         description: "内核安卓版本"
         required: true
-        default: android15
+        default: android16
         options:
           - android12
           - android13
@@ -76,7 +76,7 @@ on:
        type: choice
        description: "内核版本"
        required: true
-       default: "5.15"
+       default: "6.12"
        options:
          - "5.10"
          - "5.15"
@@ -87,7 +87,7 @@ on:
         type: choice
         description: "编译方式"
         required: true
-        default: gki
+        default: perf
         options:
           - gki
           - perf
@@ -238,6 +238,8 @@ jobs:
 
           cd ./common
           patch -p1 < 50_add_susfs_in_gki-${{ github.event.inputs.ANDROID_VERSION }}-${{ github.event.inputs.KERNEL_VERSION }}.patch || true
+          # 诊断：susfs 补丁若部分失败会留下 .rej，进而导致后续 69_hide_stuff.patch 上下文错位
+          find . -name '*.rej' -print | sed 's/^/[susfs-rej] /'
           echo "完成"
 
       - name: Apply Hide Stuff Patches
@@ -245,7 +247,10 @@ jobs:
           cd kernel_workspace/kernel_platform/common
           cp ../../SukiSU_patch/69_hide_stuff.patch ./
           echo "正在打隐藏应用补丁"
-          patch -p1 -F 3 < 69_hide_stuff.patch
+          if ! patch -p1 -F 3 < 69_hide_stuff.patch; then
+            echo "::warning::69_hide_stuff.patch 未完全适配当前内核树（hunk 失败），保留 .rej 供排查并继续"
+            find . -name '*.rej' -print | sed 's/^/[hide-stuff-rej] /'
+          fi
 
       - name: Apply LZ4KD
         run: |
